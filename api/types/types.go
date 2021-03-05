@@ -60,6 +60,7 @@ type Container struct {
 	ID         string `json:"Id"`
 	Names      []string
 	Image      string
+	AutoRange  AutoRange
 	ImageID    string
 	Command    string
 	Created    int64

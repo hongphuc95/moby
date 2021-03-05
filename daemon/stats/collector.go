@@ -13,21 +13,23 @@ import (
 
 // Collector manages and provides container resource stats
 type Collector struct {
-	m          sync.Mutex
-	cond       *sync.Cond
-	supervisor supervisor
-	interval   time.Duration
-	publishers map[*container.Container]*pubsub.Publisher
-	bufReader  *bufio.Reader
+	m                sync.Mutex
+	cond             *sync.Cond
+	supervisor       supervisor
+	interval         time.Duration
+	publishers       map[*container.Container]*pubsub.Publisher
+	bufReader        *bufio.Reader
+	AutoRangeWatcher map[string]*AutoRangeWatcher
 }
 
 // NewCollector creates a stats collector that will poll the supervisor with the specified interval
 func NewCollector(supervisor supervisor, interval time.Duration) *Collector {
 	s := &Collector{
-		interval:   interval,
-		supervisor: supervisor,
-		publishers: make(map[*container.Container]*pubsub.Publisher),
-		bufReader:  bufio.NewReaderSize(nil, 128),
+		interval:         interval,
+		supervisor:       supervisor,
+		publishers:       make(map[*container.Container]*pubsub.Publisher),
+		bufReader:        bufio.NewReaderSize(nil, 128),
+		AutoRangeWatcher: make(map[string]*AutoRangeWatcher),
 	}
 	s.cond = sync.NewCond(&s.m)
 	return s

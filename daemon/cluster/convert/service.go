@@ -128,6 +128,11 @@ func serviceSpecFromGRPC(spec *swarmapi.ServiceSpec) (*types.ServiceSpec, error)
 		EndpointSpec: endpointSpecFromGRPC(spec.Endpoint),
 	}
 
+	autoRange := AutoRangeFromGRPC(spec.AutoRange)
+	if autoRange != nil {
+		convertedSpec.AutoRange = autoRange
+	}
+
 	// UpdateConfig
 	convertedSpec.UpdateConfig = updateConfigFromGRPC(spec.Update)
 	convertedSpec.RollbackConfig = updateConfigFromGRPC(spec.Rollback)
@@ -150,6 +155,47 @@ func serviceSpecFromGRPC(spec *swarmapi.ServiceSpec) (*types.ServiceSpec, error)
 	}
 
 	return convertedSpec, nil
+}
+
+// AutoRangeFromGRPC converts a AutoRange to a GRPC AutoRange
+func AutoRangeFromGRPC(autoRange *swarmapi.AutoRange) types.AutoRange {
+	if autoRange == nil {
+		return types.AutoRange{}
+	}
+
+	ar := make(types.AutoRange)
+	for key := range autoRange.Range {
+		ar[key] = make(map[string]string)
+		for subKey, subValue := range autoRange.Range[key].Step {
+			ar[key][subKey] = subValue
+		}
+	}
+
+	return ar
+}
+
+// AutoRangeToGRPC converts a AutoRange from a GRPC AutoRange
+func AutoRangeToGRPC(autoRange types.AutoRange) *swarmapi.AutoRange {
+	if len(autoRange) <= 0 {
+		return nil
+	}
+
+	ar := make([]swarmapi.AutoRange, 1)
+	sa := ar[0]
+	sa.Range = make(map[string]*swarmapi.Range)
+	for key := range autoRange {
+
+		var rang swarmapi.Range
+
+		rang.Step = make(map[string]string)
+
+		for subKey, subValue := range autoRange[key] {
+			rang.Step[subKey] = subValue
+		}
+		sa.Range[key] = &rang
+	}
+
+	return &sa
 }
 
 // ServiceSpecToGRPC converts a ServiceSpec to a grpc ServiceSpec.
@@ -184,6 +230,12 @@ func ServiceSpecToGRPC(s types.ServiceSpec) (swarmapi.ServiceSpec, error) {
 			ForceUpdate: s.TaskTemplate.ForceUpdate,
 		},
 		Networks: serviceNetworks,
+	}
+
+	autoRange := AutoRangeToGRPC(s.AutoRange)
+	if autoRange != nil {
+		spec.AutoRange = autoRange
+		spec.Task.AutoRange = autoRange
 	}
 
 	switch s.TaskTemplate.Runtime {
@@ -684,6 +736,11 @@ func taskSpecFromGRPC(taskSpec swarmapi.TaskSpec) (types.TaskSpec, error) {
 		LogDriver:     driverFromGRPC(taskSpec.LogDriver),
 		Networks:      taskNetworks,
 		ForceUpdate:   taskSpec.ForceUpdate,
+	}
+
+	sl := AutoRangeFromGRPC(taskSpec.AutoRange)
+	if len(sl) > 0 {
+		t.AutoRange = sl
 	}
 
 	switch taskSpec.GetRuntime().(type) {

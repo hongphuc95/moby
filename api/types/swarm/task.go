@@ -89,6 +89,9 @@ type TaskSpec struct {
 	ForceUpdate uint64
 
 	Runtime RuntimeType `json:",omitempty"`
+
+	// Autorange propagation from ServiceSpec to TaskSpec
+	AutoRange AutoRange `json:",omitempty"`
 }
 
 // Resources represents resources (CPU/Memory) which can be advertised by a

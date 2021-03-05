@@ -24,6 +24,7 @@ import (
 	"github.com/docker/docker/api/types/blkiodev"
 	pblkiodev "github.com/docker/docker/api/types/blkiodev"
 	containertypes "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/container"
 	"github.com/docker/docker/daemon/config"
 	"github.com/docker/docker/daemon/initlayer"
@@ -1395,7 +1396,7 @@ func (daemon *Daemon) stats(c *container.Container) (*types.StatsJSON, error) {
 	stats := cs.Metrics
 	switch t := stats.(type) {
 	case *statsV1.Metrics:
-		return daemon.statsV1(s, t)
+		return daemon.statsV1(s, t, c)
 	case *statsV2.Metrics:
 		return daemon.statsV2(s, t)
 	default:
@@ -1403,7 +1404,7 @@ func (daemon *Daemon) stats(c *container.Container) (*types.StatsJSON, error) {
 	}
 }
 
-func (daemon *Daemon) statsV1(s *types.StatsJSON, stats *statsV1.Metrics) (*types.StatsJSON, error) {
+func (daemon *Daemon) statsV1(s *types.StatsJSON, stats *statsV1.Metrics, c *container.Container) (*types.StatsJSON, error) {
 	if stats.Blkio != nil {
 		s.BlkioStats = types.BlkioStats{
 			IoServiceBytesRecursive: copyBlkioEntry(stats.Blkio.IoServiceBytesRecursive),
@@ -1493,6 +1494,8 @@ func (daemon *Daemon) statsV1(s *types.StatsJSON, stats *statsV1.Metrics) (*type
 			Limit:   stats.Pids.Limit,
 		}
 	}
+
+	s.AutoRange = convertAutoRange(c.AutoRange)
 
 	return s, nil
 }
@@ -1597,6 +1600,21 @@ func (daemon *Daemon) statsV2(s *types.StatsJSON, stats *statsV2.Metrics) (*type
 	}
 
 	return s, nil
+}
+
+func convertAutoRange(autoRange swarm.AutoRange) types.AutoRange {
+	if len(autoRange) <= 0 {
+		return types.AutoRange{}
+	}
+
+	ar := make(types.AutoRange)
+	for key := range autoRange {
+		ar[key] = make(map[string]string)
+		for subKey, subValue := range autoRange[key] {
+			ar[key][subKey] = subValue
+		}
+	}
+	return ar
 }
 
 // setDefaultIsolation determines the default isolation mode for the

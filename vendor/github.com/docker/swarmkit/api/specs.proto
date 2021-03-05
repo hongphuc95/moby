@@ -89,6 +89,16 @@ message ServiceSpec {
 	// Service endpoint specifies the user provided configuration
 	// to properly discover and load balance a service.
 	EndpointSpec endpoint = 8;
+
+	AutoRange AutoRange = 12;
+}
+
+message Range {
+	map<string, string> Step = 1;
+}
+
+message AutoRange {
+	map<string, Range> Range = 1;
 }
 
 // ReplicatedService sets the reconciliation target to certain number of replicas.
@@ -161,6 +171,8 @@ message TaskSpec {
 	//
 	// ResourceReferences is a list of ResourceReferences used by the task.
 	repeated ResourceReference resource_references = 11 [(gogoproto.nullable) = false];
+
+	AutoRange AutoRange = 12;
 }
 
 message ResourceReference {
@@ -370,6 +382,8 @@ message ContainerSpec {
 	// Ulimits defines the list of ulimits to set in the container. This option
 	// is equivalent to passing --ulimit to docker run.
 	repeated Ulimit ulimits = 29;
+
+	AutoRange AutoRange = 30;
 }
 
 // EndpointSpec defines the properties that can be configured to

@@ -5,16 +5,42 @@ import (
 	"encoding/json"
 	"errors"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/backend"
+	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/api/types/versions"
 	"github.com/docker/docker/api/types/versions/v1p20"
+	"github.com/docker/docker/client"
 	"github.com/docker/docker/container"
+	"github.com/docker/docker/daemon/stats"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/ioutils"
 )
+
+func getAutoRange(ctx context.Context, containerID string) (swarm.AutoRange, string, bool) {
+	cli, err := client.NewEnvClient()
+	if err != nil {
+		return swarm.AutoRange{}, "", false
+	}
+	defer cli.Close()
+	container, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return swarm.AutoRange{}, "", false
+	}
+
+	// Swarm labels needed to get AutoRange configuration
+	serviceID, serviceName := container.Config.Labels["com.docker.swarm.service.id"], container.Config.Labels["com.docker.swarm.service.name"]
+	if serviceID != "" && serviceName != "" {
+		resp, _, _ := cli.ServiceInspectWithRaw(ctx, serviceID, types.ServiceInspectOptions{})
+		if resp.Spec.AutoRange != nil {
+			return resp.Spec.AutoRange, serviceName, true
+		}
+	}
+	return swarm.AutoRange{}, "", false
+}
 
 // ContainerStats writes information about the container to the stream
 // given in the config object.
@@ -41,6 +67,38 @@ func (daemon *Daemon) ContainerStats(ctx context.Context, prefixOrName string, c
 			Name: ctr.Name,
 			ID:   ctr.ID,
 		})
+	}
+
+	// AutoRange initialisation
+	if autoRange, serviceName, ok := getAutoRange(ctx, ctr.ID); ok {
+		if _, exist := daemon.statsCollector.AutoRangeWatcher[serviceName]; exist {
+			if daemon.statsCollector.AutoRangeWatcher[serviceName].Target != ctr {
+				daemon.statsCollector.AutoRangeWatcher[serviceName].Target = ctr
+				daemon.statsCollector.AutoRangeWatcher[serviceName].UpdateResources()
+			}
+		} else if _, exist := daemon.statsCollector.AutoRangeWatcher[ctr.ID]; !exist {
+			limit := 10 // Size limit of timeserie
+			daemon.statsCollector.AutoRangeWatcher[ctr.ID] = &stats.AutoRangeWatcher{
+				Config:      autoRange,
+				TickRate:    time.Second,
+				Target:      ctr,
+				ServiceName: serviceName[:strings.LastIndex(serviceName, "_")],
+				Input:       make(chan types.StatsJSON, 1),
+				Output:      make(chan types.StatsJSON, 1),
+				WaitChan:    make(chan bool, 1),
+				Obs:         stats.NewObservor(limit),
+				Ctx:         ctx,
+				Limit:       limit,
+				Finished:    false,
+			}
+			go func() {
+				daemon.statsCollector.AutoRangeWatcher[ctr.ID].Watch()
+				daemon.statsCollector.AutoRangeWatcher[serviceName] = daemon.statsCollector.AutoRangeWatcher[ctr.ID]
+				delete(daemon.statsCollector.AutoRangeWatcher, ctr.ID)
+			}()
+		} else if !daemon.statsCollector.AutoRangeWatcher[ctr.ID].Finished {
+			daemon.statsCollector.AutoRangeWatcher[ctr.ID].SetNewContext(ctx)
+		}
 	}
 
 	outStream := config.OutStream
@@ -70,6 +128,10 @@ func (daemon *Daemon) ContainerStats(ctx context.Context, prefixOrName string, c
 	defer daemon.unsubscribeToContainerStats(ctr, updates)
 
 	noStreamFirstFrame := !config.OneShot
+
+	var oldStats *types.StatsJSON
+	first := true
+
 	for {
 		select {
 		case v, ok := <-updates:
@@ -79,6 +141,32 @@ func (daemon *Daemon) ContainerStats(ctx context.Context, prefixOrName string, c
 
 			var statsJSON interface{}
 			statsJSONPost120 := getStatJSON(v)
+			if first {
+				oldStats = statsJSONPost120
+				first = false
+			}
+			if _, exist := daemon.statsCollector.AutoRangeWatcher[ctr.ID]; exist {
+				if !daemon.statsCollector.AutoRangeWatcher[ctr.ID].Finished {
+					select {
+					case daemon.statsCollector.AutoRangeWatcher[ctr.ID].Input <- *statsJSONPost120:
+					default:
+					}
+
+					select {
+					case up, ok := <-daemon.statsCollector.AutoRangeWatcher[ctr.ID].Output:
+						if !ok {
+							return nil
+						}
+
+						statsJSONPost120 = &up
+						oldStats = statsJSONPost120
+					default:
+						statsJSONPost120 = oldStats
+					}
+				} else {
+					statsJSONPost120.AutoRange = stats.ConvertAutoRange(daemon.statsCollector.AutoRangeWatcher[ctr.ID].Config)
+				}
+			}
 			if versions.LessThan(apiVersion, "1.21") {
 				var (
 					rxBytes   uint64
